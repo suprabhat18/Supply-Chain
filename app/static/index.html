@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Shipment Analytics</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7; --surface-1: #fcfcfb;
+    --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #898781;
+    --grid: #e1e0d9; --axis: #c3c2b7; --border: rgba(11,11,11,0.10);
+    --series-1: #2a78d6; --series-1-hover: #5598e7;
+    --critical: #d03b3b; --warning: #fab219; --good-text: #006300;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface-1: #1a1a19;
+      --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #898781;
+      --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+      --series-1: #3987e5; --series-1-hover: #6da7ec; --good-text: #0ca30c;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface-1: #1a1a19;
+    --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255,255,255,0.10);
+    --series-1: #3987e5; --series-1-hover: #6da7ec; --good-text: #0ca30c;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--page); color: var(--text-primary);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1180px; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--text-secondary); margin: 0 0 20px; }
+  .filters { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-bottom: 20px; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; background: var(--surface-1); color: var(--text-secondary); padding: 6px 12px;
+                font: inherit; cursor: pointer; }
+  .seg button + button { border-left: 1px solid var(--border); }
+  .seg button[aria-pressed="true"] { color: var(--text-primary); font-weight: 600; background: var(--grid); }
+  label.f { color: var(--text-secondary); display: inline-flex; gap: 6px; align-items: center; }
+  input[type=date] { font: inherit; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px;
+                     background: var(--surface-1); color: var(--text-primary); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 16px; }
+  .tile .k { color: var(--text-secondary); font-size: 13px; }
+  .tile .v { font-size: 26px; font-weight: 600; margin-top: 4px; }
+  .tile .n { color: var(--text-muted); font-size: 12px; margin-top: 2px; }
+  .grid2 { display: grid; grid-template-columns: 3fr 2fr; gap: 16px; margin-bottom: 16px; }
+  @media (max-width: 860px) { .grid2 { grid-template-columns: 1fr; } }
+  .card h2 { font-size: 15px; margin: 0 0 2px; }
+  .card .desc { color: var(--text-secondary); font-size: 13px; margin: 0 0 12px; }
+  svg { display: block; width: 100%; height: auto; overflow: visible; }
+  svg text { fill: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .gridline { stroke: var(--grid); stroke-width: 1; }
+  .baseline { stroke: var(--axis); stroke-width: 1; }
+  .line { fill: none; stroke: var(--series-1); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+  .bar { fill: var(--series-1); }
+  .bar.hover { fill: var(--series-1-hover); }
+  .crosshair { stroke: var(--axis); stroke-width: 1; }
+  .dot { fill: var(--series-1); stroke: var(--surface-1); stroke-width: 2; }
+  svg text.vlabel { fill: var(--text-secondary); }
+  .tip { position: fixed; pointer-events: none; z-index: 10; background: var(--surface-1); color: var(--text-primary);
+         border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px;
+         box-shadow: 0 4px 16px rgba(0,0,0,.12); display: none; min-width: 150px; }
+  .tip .t { color: var(--text-secondary); margin-bottom: 4px; }
+  .tip .row { display: flex; gap: 8px; align-items: center; }
+  .tip .row strong { font-size: 14px; }
+  .tip .key { width: 12px; height: 2px; background: var(--series-1); border-radius: 1px; }
+  .tip .m { color: var(--text-secondary); }
+  details { margin-top: 10px; }
+  summary { color: var(--text-secondary); cursor: pointer; font-size: 13px; }
+  .tbl-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+  th { color: var(--text-secondary); font-weight: 600; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .badge { display: inline-flex; gap: 4px; align-items: center; font-size: 12px; color: var(--text-secondary); }
+  .badge::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--critical); }
+  .loading { opacity: .5; transition: opacity .15s; }
+  .err { color: var(--critical); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Supply Chain Shipment Analytics</h1>
+  <p class="sub">Delivery performance by delivered date. Late = delivered after the promised date.</p>
+
+  <div class="filters" role="group" aria-label="Filters">
+    <div class="seg" id="presets" role="group" aria-label="Date range">
+      <button data-p="3">Last 3 months</button>
+      <button data-p="12" aria-pressed="true">Last 12 months</button>
+      <button data-p="0">All time</button>
+    </div>
+    <label class="f">From <input type="date" id="from"></label>
+    <label class="f">To <input type="date" id="to"></label>
+    <div class="seg" id="source" role="group" aria-label="Data source">
+      <button data-s="rollup" aria-pressed="true" title="Precomputed rollups">Rollup</button>
+      <button data-s="live" title="Scan shipments table">Live</button>
+    </div>
+    <span id="timing" class="n" style="color:var(--text-muted);font-size:12px"></span>
+  </div>
+
+  <div id="content">
+    <section class="tiles" id="tiles" aria-label="Key metrics"></section>
+
+    <div class="grid2">
+      <section class="card">
+        <h2>On-time delivery rate by month</h2>
+        <p class="desc">Share of delivered shipments that arrived on or before the promised date</p>
+        <div id="trend"></div>
+        <details><summary>View as table</summary><div class="tbl-wrap" id="trend-table"></div></details>
+      </section>
+      <section class="card">
+        <h2>On-time rate by carrier</h2>
+        <p class="desc">Worst first</p>
+        <div id="carriers"></div>
+        <details><summary>View as table</summary><div class="tbl-wrap" id="carrier-table"></div></details>
+      </section>
+    </div>
+
+    <section class="card">
+      <h2>Suppliers with the highest late rate</h2>
+      <p class="desc" id="sup-desc">Minimum 20 deliveries in range</p>
+      <div class="tbl-wrap" id="suppliers"></div>
+    </section>
+  </div>
+</main>
+<div class="tip" id="tip" role="tooltip"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const pct = v => v == null ? "–" : (v * 100).toFixed(1) + "%";
+const num = v => v == null ? "–" : Number(v).toLocaleString();
+const SVGNS = "http://www.w3.org/2000/svg";
+const state = { from: null, to: null, source: "rollup" };
+
+function el(tag, attrs = {}, parent) {
+  const n = document.createElementNS(SVGNS, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (parent) parent.appendChild(n);
+  return n;
+}
+function h(tag, text, cls) {
+  const n = document.createElement(tag);
+  if (text != null) n.textContent = text;
+  if (cls) n.className = cls;
+  return n;
+}
+const iso = d => d.toISOString().slice(0, 10);
+
+function setPreset(months) {
+  document.querySelectorAll("#presets button").forEach(b => b.setAttribute("aria-pressed", b.dataset.p == months));
+  if (months == 0) { state.from = state.to = null; }
+  else {
+    // Whole calendar months (ending this month) so the supplier rollup can answer exactly.
+    const now = new Date();
+    state.from = iso(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (months - 1), 1)));
+    state.to = iso(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)));
+  }
+  $("#from").value = state.from || ""; $("#to").value = state.to || "";
+  load();
+}
+
+function qs(extra = {}) {
+  const p = new URLSearchParams({ source: state.source, ...extra });
+  if (state.from) p.set("date_from", state.from);
+  if (state.to) p.set("date_to", state.to);
+  return p.toString();
+}
+async function get(path, extra) {
+  const r = await fetch(path + "?" + qs(extra));
+  if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+  return r.json();
+}
+
+// ------------------------------------------------------------------ tooltip
+const tip = $("#tip");
+function showTip(evt, title, rows) {
+  tip.replaceChildren(h("div", title, "t"));
+  for (const [value, label] of rows) {
+    const row = h("div", null, "row");
+    row.append(h("span", null, "key"), h("strong", value), h("span", label, "m"));
+    tip.appendChild(row);
+  }
+  tip.style.display = "block";
+  const x = evt.clientX ?? (evt.target.getBoundingClientRect().right);
+  const y = evt.clientY ?? (evt.target.getBoundingClientRect().top);
+  const w = tip.offsetWidth;
+  tip.style.left = Math.min(x + 14, innerWidth - w - 8) + "px";
+  tip.style.top = (y + 14) + "px";
+}
+const hideTip = () => { tip.style.display = "none"; };
+
+// ------------------------------------------------------------------ tiles
+function renderTiles(s) {
+  const tiles = [
+    ["Delivered", num(s.delivered), "shipments in range"],
+    ["On-time rate", pct(s.on_time_rate), num(s.late) + " late"],
+    ["Avg days late", s.avg_days_late_when_late == null ? "–" : s.avg_days_late_when_late.toFixed(1),
+     "when late · max " + s.max_delay_days + "d"],
+    ["In transit", num(s.in_transit), "open now"],
+    ["Overdue in transit", num(s.overdue_in_transit), "past promised date"],
+    ["Exceptions", num(s.exceptions), "open now · need attention"],
+  ];
+  $("#tiles").replaceChildren(...tiles.map(([k, v, n]) => {
+    const t = h("div", null, "card tile");
+    t.append(h("div", k, "k"), h("div", v, "v"), h("div", n, "n"));
+    return t;
+  }));
+}
+
+// ------------------------------------------------------------------ line chart
+function niceDomain(vals) {
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  lo = Math.max(0, Math.floor(lo * 20) / 20 - 0.05); hi = Math.min(1, Math.ceil(hi * 20) / 20);
+  return [lo, hi];
+}
+function renderTrend(rows) {
+  const box = $("#trend"); box.replaceChildren();
+  if (!rows.length) { box.append(h("p", "No deliveries in range.", "desc")); return; }
+  const W = 640, H = 340, m = { l: 44, r: 24, t: 10, b: 28 };
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "On-time rate by month" }, box);
+  const [lo, hi] = niceDomain(rows.map(r => r.on_time_rate));
+  const x = i => m.l + (rows.length === 1 ? (W - m.l - m.r) / 2 : i * (W - m.l - m.r) / (rows.length - 1));
+  const y = v => m.t + (1 - (v - lo) / (hi - lo)) * (H - m.t - m.b);
+  const step = (hi - lo) > 0.3 ? 0.1 : 0.05;
+  for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) {
+    el("line", { class: "gridline", x1: m.l, x2: W - m.r, y1: y(v), y2: y(v) }, svg);
+    el("text", { x: m.l - 6, y: y(v) + 4, "text-anchor": "end" }, svg).textContent = Math.round(v * 100) + "%";
+  }
+  el("line", { class: "baseline", x1: m.l, x2: W - m.r, y1: H - m.b, y2: H - m.b }, svg);
+  const every = Math.ceil(rows.length / 8);
+  rows.forEach((r, i) => {
+    if ((rows.length - 1 - i) % every === 0)   // anchor ticks to the latest month so it is always labelled
+      el("text", { x: x(i), y: H - m.b + 16, "text-anchor": "middle" }, svg).textContent = r.month;
+  });
+  el("path", { class: "line", d: rows.map((r, i) => (i ? "L" : "M") + x(i) + "," + y(r.on_time_rate)).join("") }, svg);
+
+  const cross = el("line", { class: "crosshair", y1: m.t, y2: H - m.b, visibility: "hidden" }, svg);
+  const dot = el("circle", { class: "dot", r: 5, visibility: "hidden" }, svg);
+  const hit = el("rect", { x: m.l, y: 0, width: W - m.l - m.r, height: H, fill: "transparent", tabindex: 0 }, svg);
+  const focusIdx = (i, evt) => {
+    const r = rows[i];
+    cross.setAttribute("x1", x(i)); cross.setAttribute("x2", x(i)); cross.setAttribute("visibility", "visible");
+    dot.setAttribute("cx", x(i)); dot.setAttribute("cy", y(r.on_time_rate)); dot.setAttribute("visibility", "visible");
+    showTip(evt, r.month, [[pct(r.on_time_rate), "on time"], [num(r.delivered), "delivered"], [num(r.late), "late"]]);
+  };
+  let cur = rows.length - 1;
+  hit.addEventListener("pointermove", e => {
+    const pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY;
+    const p = pt.matrixTransform(svg.getScreenCTM().inverse());
+    cur = Math.max(0, Math.min(rows.length - 1, Math.round((p.x - m.l) / ((W - m.l - m.r) / Math.max(1, rows.length - 1)))));
+    focusIdx(cur, e);
+  });
+  hit.addEventListener("keydown", e => {
+    if (e.key === "ArrowRight") cur = Math.min(rows.length - 1, cur + 1);
+    else if (e.key === "ArrowLeft") cur = Math.max(0, cur - 1); else return;
+    e.preventDefault(); focusIdx(cur, { target: dot });
+  });
+  const leave = () => { cross.setAttribute("visibility", "hidden"); dot.setAttribute("visibility", "hidden"); hideTip(); };
+  hit.addEventListener("pointerleave", leave); hit.addEventListener("blur", leave);
+
+  table("#trend-table", ["Month", "Delivered", "Late", "On-time", "Avg days late"],
+        rows.map(r => [r.month, num(r.delivered), num(r.late), pct(r.on_time_rate),
+                       r.avg_days_late_when_late?.toFixed(1) ?? "–"]));
+}
+
+// ------------------------------------------------------------------ bar chart
+function renderCarriers(rows) {
+  const box = $("#carriers"); box.replaceChildren();
+  rows = rows.filter(r => r.delivered > 0);
+  if (!rows.length) { box.append(h("p", "No deliveries in range.", "desc")); return; }
+  const W = 440, rowH = 22, gap = 2, m = { l: 132, r: 52, t: 4, b: 4 };
+  const H = m.t + m.b + rows.length * (rowH + gap);
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "On-time rate by carrier" }, box);
+  const xMax = 1, x = v => (v / xMax) * (W - m.l - m.r);
+  el("line", { class: "baseline", x1: m.l, x2: m.l, y1: m.t, y2: H - m.b }, svg);
+  rows.forEach((r, i) => {
+    const y0 = m.t + i * (rowH + gap);
+    const label = el("text", { x: m.l - 8, y: y0 + rowH / 2 + 4, "text-anchor": "end" }, svg);
+    label.textContent = r.name.length > 20 ? r.name.slice(0, 19) + "…" : r.name;
+    const w = Math.max(6, x(r.on_time_rate));
+    // bar with 4px rounded data-end, square at the baseline
+    const bar = el("path", { class: "bar", d:
+      `M${m.l},${y0 + 3}h${w - 4}a4,4 0 0 1 4,4v${rowH - 14}a4,4 0 0 1 -4,4h${-(w - 4)}z` }, svg);
+    el("text", { class: "vlabel", x: m.l + w + 6, y: y0 + rowH / 2 + 4 }, svg).textContent = pct(r.on_time_rate);
+    const hit = el("rect", { x: 0, y: y0, width: W, height: rowH + gap, fill: "transparent", tabindex: 0 }, svg);
+    const on = e => { bar.classList.add("hover");
+      showTip(e, `${r.name} (${r.scac_code} · ${r.mode})`,
+              [[pct(r.on_time_rate), "on time"], [num(r.delivered), "delivered"],
+               [r.avg_days_late_when_late?.toFixed(1) ?? "–", "avg days late when late"]]); };
+    const off = () => { bar.classList.remove("hover"); hideTip(); };
+    hit.addEventListener("pointermove", on); hit.addEventListener("focus", on);
+    hit.addEventListener("pointerleave", off); hit.addEventListener("blur", off);
+  });
+  table("#carrier-table", ["Carrier", "Mode", "Delivered", "Late", "On-time", "Max delay"],
+        rows.map(r => [`${r.name} (${r.scac_code})`, r.mode, num(r.delivered), num(r.late),
+                       pct(r.on_time_rate), r.max_delay_days + "d"]));
+}
+
+// ------------------------------------------------------------------ tables
+function table(sel, headers, rows, numericFrom = 2) {
+  const t = h("table"), thead = h("thead"), tr = h("tr");
+  headers.forEach((x, i) => { const th = h("th", x); if (i >= numericFrom) th.className = "num"; tr.append(th); });
+  thead.append(tr); t.append(thead);
+  const tb = h("tbody");
+  for (const r of rows) {
+    const row = h("tr");
+    r.forEach((v, i) => { const td = h("td", v); if (i >= numericFrom) td.className = "num"; row.append(td); });
+    tb.append(row);
+  }
+  t.append(tb); $(sel).replaceChildren(t);
+}
+function renderSuppliers(rows, usedLive) {
+  $("#sup-desc").textContent = "Minimum 20 deliveries in range" +
+    (usedLive ? " · computed live (range isn't whole months)" : "");
+  table("#suppliers", ["Supplier", "Country · tier", "Delivered", "Late", "On-time", "Avg days late", "Max delay"],
+        rows.map(r => [`${r.name} (${r.supplier_code})`, `${r.country} · T${r.tier}`, num(r.delivered),
+                       num(r.late), pct(r.on_time_rate), r.avg_days_late_when_late?.toFixed(1) ?? "–",
+                       r.max_delay_days + "d"]));
+}
+
+// ------------------------------------------------------------------ load
+let seq = 0;
+async function load() {
+  const my = ++seq, t0 = performance.now();
+  $("#content").classList.add("loading");
+  try {
+    const supplierArgs = { limit: 15, order: "worst" };
+    const supplierReq = get("/analytics/delays/by-supplier", supplierArgs)
+      .then(r => [r, false])
+      .catch(() => get("/analytics/delays/by-supplier", { ...supplierArgs, source: "live" }).then(r => [r, true]));
+    const [summary, trend, carriers, [sup, usedLive]] = await Promise.all([
+      get("/analytics/summary"), get("/analytics/delays/trend"), get("/analytics/delays/by-carrier"), supplierReq]);
+    if (my !== seq) return;
+    renderTiles(summary); renderTrend(trend); renderCarriers(carriers); renderSuppliers(sup, usedLive && state.source === "rollup");
+    $("#timing").textContent = `${state.source} · ${Math.round(performance.now() - t0)} ms`;
+  } catch (e) {
+    if (my === seq) $("#tiles").replaceChildren(h("p", "Failed to load: " + e.message, "err"));
+  } finally {
+    if (my === seq) $("#content").classList.remove("loading");
+  }
+}
+
+document.querySelectorAll("#presets button").forEach(b => b.addEventListener("click", () => setPreset(+b.dataset.p)));
+document.querySelectorAll("#source button").forEach(b => b.addEventListener("click", () => {
+  state.source = b.dataset.s;
+  document.querySelectorAll("#source button").forEach(x => x.setAttribute("aria-pressed", x === b));
+  load();
+}));
+for (const id of ["from", "to"]) $("#" + id).addEventListener("change", e => {
+  state[id] = e.target.value || null;
+  document.querySelectorAll("#presets button").forEach(b => b.setAttribute("aria-pressed", false));
+  load();
+});
+setPreset(12);
+</script>
+</body>
+</html>

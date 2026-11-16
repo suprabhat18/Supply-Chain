@@ -30,6 +30,12 @@ def clients(tmp_path_factory):
         admin.execute("CREATE DATABASE sa_cross")
     pg_url = _pg_url_for("sa_cross")
     seed(pg_url, **SEED_ARGS)
+    # Guard against comparing an engine with itself.
+    from app.db import POSTGRES, SQLITE, connect
+    for target, dialect in [(sqlite_path, SQLITE), (pg_url, POSTGRES)]:
+        c = connect(target)
+        assert c.dialect is dialect and c.execute("SELECT COUNT(*) FROM shipments").fetchone()[0] == 8000
+        c.close()
 
     def make(target):
         def get(path, **params):
@@ -79,7 +85,7 @@ def test_analytics_identical(clients, source, rng):
 @pytest.mark.parametrize("order", ["worst", "best"])
 def test_supplier_rankings_identical(clients, source, rng, order):
     lite, pg = clients
-    params = {**rng, "source": source, "order": order, "limit": 500, "min_delivered": 5}
+    params = {**rng, "source": source, "order": order, "limit": 500, "min_delivered": 1}
     a, b = lite("/analytics/delays/by-supplier", **params), pg("/analytics/delays/by-supplier", **params)
     assert len(a) > 10 and norm(a) == norm(b)
 

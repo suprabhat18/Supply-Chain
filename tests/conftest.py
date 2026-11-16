@@ -18,7 +18,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from app.db import connect  # noqa: E402
+from app.db import POSTGRES, SQLITE, connect, is_postgres  # noqa: E402
 from scripts.seed import seed  # noqa: E402
 
 PG_URL = os.environ.get("TEST_DATABASE_URL")
@@ -33,10 +33,12 @@ def _pg_admin():
 
 
 def _pg_url_for(dbname: str) -> str:
-    from psycopg.conninfo import conninfo_to_dict, make_conninfo
-    params = conninfo_to_dict(PG_URL)
-    params["dbname"] = dbname
-    return make_conninfo(**params)
+    """Same server as TEST_DATABASE_URL, different database. Must stay a postgresql:// URL:
+    connect() picks the engine from the URL scheme."""
+    from urllib.parse import urlsplit
+    url = urlsplit(PG_URL)._replace(path="/" + dbname).geturl()
+    assert is_postgres(url), url
+    return url
 
 
 @pytest.fixture(scope="session", params=BACKENDS)
@@ -79,15 +81,18 @@ def db(seeded_db, tmp_path):
 
 
 @pytest.fixture
-def conn(db):
+def conn(db, backend):
     c = connect(db)
+    # Guard: a Postgres-parametrized test must never silently run on SQLite.
+    assert c.dialect is (POSTGRES if backend == "postgres" else SQLITE)
     yield c
     c.close()
 
 
 @pytest.fixture
-def client(db, monkeypatch):
+def client(db, backend, monkeypatch):
     from fastapi.testclient import TestClient
+    assert is_postgres(db) == (backend == "postgres")
     monkeypatch.setenv("DATABASE_URL", db)
     from app.main import app
     return TestClient(app)

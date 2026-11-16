@@ -10,25 +10,29 @@ transaction, so it can be re-run for late-arriving or corrected shipments.
 The supplier rollup is monthly, so its window is widened to whole months.
 
 Delay definition (shared by live queries and the rollups):
-    delay_days = julianday(delivered_date) - julianday(promised_date)
+    delay_days = delivered_date - promised_date   (whole days)
     late       = delay_days > 0
-Only delivered shipments have a delay.
+Only delivered shipments have a delay. Engine-specific SQL comes from conn.dialect.
 """
 from __future__ import annotations
 
-import sqlite3
 from datetime import date
 
-from .db import transaction
+from .db import Dialect, transaction
 
-DELAY_EXPR = "CAST(julianday(s.delivered_date) - julianday(s.promised_date) AS INTEGER)"
 
-AGGREGATES = f"""
-    COUNT(*),
-    SUM(CASE WHEN {DELAY_EXPR} > 0 THEN 1 ELSE 0 END),
-    SUM(MAX({DELAY_EXPR}, 0)),
-    MAX(MAX({DELAY_EXPR}, 0))
-"""
+def delay_expr(d: Dialect, alias: str = "s") -> str:
+    return d.delay(f"{alias}.delivered_date", f"{alias}.promised_date")
+
+
+def aggregates(d: Dialect) -> str:
+    delay = delay_expr(d)
+    return f"""
+        COUNT(*),
+        SUM(CASE WHEN {delay} > 0 THEN 1 ELSE 0 END),
+        SUM({d.pos(delay)}),
+        MAX({d.pos(delay)})
+    """
 
 
 def _month_bounds(from_date: str | None, to_date: str | None) -> tuple[str | None, str | None]:
@@ -53,13 +57,13 @@ def _window(column: str, lo: str | None, hi: str | None) -> tuple[str, list[str]
     return (" AND ".join(clauses) or "1=1"), params
 
 
-def refresh_delay_metrics(
-    conn: sqlite3.Connection, from_date: str | None = None, to_date: str | None = None
-) -> int:
+def refresh_delay_metrics(conn, from_date: str | None = None, to_date: str | None = None) -> int:
     """Rebuild rollups for delivered_date in [from_date, to_date] (inclusive; None = unbounded).
 
     Returns the total number of rollup rows written.
     """
+    d = conn.dialect
+    agg = aggregates(d)
     m_lo, m_hi = _month_bounds(from_date, to_date)
 
     with transaction(conn):
@@ -70,7 +74,7 @@ def refresh_delay_metrics(
         written = conn.execute(
             f"""INSERT INTO delay_metrics_carrier_daily
                     (metric_date, carrier_id, delivered_count, late_count, total_delay_days, max_delay_days)
-                SELECT s.delivered_date, s.carrier_id, {AGGREGATES}
+                SELECT s.delivered_date, s.carrier_id, {agg}
                 FROM shipments s
                 WHERE s.delivered_date IS NOT NULL AND {w}
                 GROUP BY s.delivered_date, s.carrier_id""",
@@ -81,13 +85,14 @@ def refresh_delay_metrics(
         w, p = _window("metric_month", m_lo and m_lo[:7], m_hi and m_hi[:7])
         conn.execute(f"DELETE FROM delay_metrics_supplier_monthly WHERE {w}", p)
         w, p = _window("s.delivered_date", m_lo, m_hi)
+        month = d.month("s.delivered_date")
         written += conn.execute(
             f"""INSERT INTO delay_metrics_supplier_monthly
                     (metric_month, supplier_id, delivered_count, late_count, total_delay_days, max_delay_days)
-                SELECT substr(s.delivered_date, 1, 7), s.supplier_id, {AGGREGATES}
+                SELECT {month}, s.supplier_id, {agg}
                 FROM shipments s
                 WHERE s.delivered_date IS NOT NULL AND {w}
-                GROUP BY substr(s.delivered_date, 1, 7), s.supplier_id""",
+                GROUP BY {month}, s.supplier_id""",
             p,
         ).rowcount
 

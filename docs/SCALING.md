@@ -45,7 +45,16 @@ operations are, so plan the migration around the second app instance.
 
 ## 3. Migration plan
 
-### Phase 0: make the code dialect-portable (no behavior change)
+### Phase 0: make the code dialect-portable (no behavior change). **Done**
+
+Implemented: `app/db.py` provides a `Dialect` (delay, `GREATEST`/`MAX`, month bucket) and a
+connection adapter with one API on both engines. `app/schema_postgres.sql` is the Phase 1 schema.
+Integrity errors are classified by constraint name on both engines. `tests/test_cross_engine.py`
+is the Phase 2 verification: same seed into both engines, every API response compared, run in CI
+against Postgres 16. What remains is the operational part (Phases 2–3 on production data), plus
+a connection pool (`psycopg_pool`) to replace connect-per-request.
+
+The original analysis follows.
 
 All SQL lives in `app/queries.py`, `app/metrics.py` and `app/main.py`. These are the
 SQLite-specific constructs to replace:

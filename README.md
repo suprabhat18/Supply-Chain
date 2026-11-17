@@ -25,10 +25,18 @@ to Postgres.
   API response matches (102 tests against Postgres 16).
 - **Scaling plan** with measured numbers: [docs/SCALING.md](docs/SCALING.md).
 
+## Live demo
+
+Deployed on Render's free tier (`render.yaml`). The 150k-shipment SQLite database is built
+during deploy, and the deployment is read-only (`DEMO_READ_ONLY=1`: write endpoints return
+403). Free services sleep after 15 minutes idle, so the first visit afterwards takes about a minute.
+
+To deploy your own copy: Render dashboard → **New → Blueprint** → select this repo → **Apply**.
+
 ## Quick start
 
 ```bash
-python -m venv .venv && .venv/bin/pip install -r requirements.txt
+python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m scripts.seed              # builds data/shipments.db (~10 s)
 .venv/bin/uvicorn app.main:app --reload       # dashboard: http://localhost:8000  API docs: /docs
 .venv/bin/python -m pytest -q                 # SQLite; see below for Postgres

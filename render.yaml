@@ -1,0 +1,21 @@
+# Render Blueprint: free web service with the SQLite database built at deploy time.
+# Deploy: Render dashboard -> New -> Blueprint -> pick this repo. See README "Live demo".
+services:
+  - type: web
+    name: supply-chain-analytics
+    runtime: python
+    plan: free
+    # Seeding during the build bakes data/shipments.db into the deploy, so waking
+    # from sleep doesn't wait for it (~10 s here, slower on the free CPU).
+    buildCommand: pip install -r requirements.txt && python -m scripts.seed
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: DEMO_READ_ONLY
+        value: "1"
+      # To run on Postgres instead (e.g. a free Neon database), add DATABASE_URL here
+      # (sync: false = set its value in the dashboard, never in git) and change the
+      # buildCommand seed to: python -m scripts.seed --db "$DATABASE_URL"

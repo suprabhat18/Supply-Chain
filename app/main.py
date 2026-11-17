@@ -4,6 +4,8 @@
 """
 from __future__ import annotations
 
+import os
+
 from datetime import date
 from pathlib import Path
 from typing import Any, Iterator, Literal
@@ -70,7 +72,21 @@ def dashboard() -> FileResponse:
 def health(conn: Any = Depends(get_conn)) -> dict[str, Any]:
     last = conn.execute("SELECT MAX(refreshed_at) FROM metrics_refresh_log").fetchone()[0]
     return {"status": "ok", "shipments": conn.execute("SELECT COUNT(*) FROM shipments").fetchone()[0],
-            "metrics_refreshed_at": last}
+            "metrics_refreshed_at": last,
+            # Lets clients anchor "last N months" on the data rather than the wall clock.
+            "latest_delivered_date": conn.execute("SELECT MAX(delivered_date) FROM shipments").fetchone()[0],
+            "read_only": read_only()}
+
+
+def read_only() -> bool:
+    return os.environ.get("DEMO_READ_ONLY", "").lower() in ("1", "true", "yes")
+
+
+def require_writable() -> None:
+    """Public demo deployments set DEMO_READ_ONLY=1: data stays fixed and nobody can
+    trigger expensive rollup rebuilds."""
+    if read_only():
+        raise HTTPException(403, "this deployment is read-only (DEMO_READ_ONLY)")
 
 
 # ------------------------------------------------------------------ reference data
@@ -180,7 +196,7 @@ def _integrity_error(e: Exception) -> HTTPException:
     return HTTPException(422, f"constraint violation ({kind}{': ' + name if name else ''})")
 
 
-@app.post("/shipments", response_model=Shipment, status_code=201)
+@app.post("/shipments", response_model=Shipment, status_code=201, dependencies=[Depends(require_writable)])
 def create_shipment(body: ShipmentCreate, conn: Any = Depends(get_conn)) -> Shipment:
     carrier_id = _resolve(conn, "carriers", "scac_code", "carrier_id", body.carrier_scac.upper(), "carrier")
     supplier_id = _resolve(conn, "suppliers", "supplier_code", "supplier_id", body.supplier_code, "supplier")
@@ -203,7 +219,7 @@ def create_shipment(body: ShipmentCreate, conn: Any = Depends(get_conn)) -> Ship
     return get_shipment(new_id, conn)
 
 
-@app.patch("/shipments/{shipment_id}", response_model=Shipment)
+@app.patch("/shipments/{shipment_id}", response_model=Shipment, dependencies=[Depends(require_writable)])
 def update_shipment_status(shipment_id: int, body: ShipmentStatusUpdate,
                            conn: Any = Depends(get_conn)) -> Shipment:
     old = conn.execute("SELECT delivered_date FROM shipments WHERE shipment_id = ?", (shipment_id,)).fetchone()
@@ -267,7 +283,7 @@ def analytics_trend(
     return queries.delay_trend(conn, _iso(date_from), _iso(date_to), carrier_id, source)
 
 
-@app.post("/admin/refresh-metrics")
+@app.post("/admin/refresh-metrics", dependencies=[Depends(require_writable)])
 def admin_refresh(date_from: date | None = FROM_Q, date_to: date | None = TO_Q,
                   conn: Any = Depends(get_conn)) -> dict[str, Any]:
     _check_range(date_from, date_to)

@@ -35,6 +35,7 @@
   main { max-width: 1180px; margin: 0 auto; padding: 24px 16px 48px; }
   h1 { font-size: 20px; margin: 0 0 4px; }
   .sub { color: var(--text-secondary); margin: 0 0 20px; }
+  .sub a { color: inherit; }
   .filters { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-bottom: 20px; }
   .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
   .seg button { border: 0; background: var(--surface-1); color: var(--text-secondary); padding: 6px 12px;
@@ -87,7 +88,8 @@
 <body>
 <main>
   <h1>Supply Chain Shipment Analytics</h1>
-  <p class="sub">Delivery performance by delivered date. Late = delivered after the promised date.</p>
+  <p class="sub">Delivery performance by delivered date. Late = delivered after the promised date.
+    Synthetic data · <a href="/docs">API docs</a> · <a href="https://github.com/suprabhat18/Supply-Chain">Source</a></p>
 
   <div class="filters" role="group" aria-label="Filters">
     <div class="seg" id="presets" role="group" aria-label="Date range">
@@ -136,7 +138,8 @@ const $ = s => document.querySelector(s);
 const pct = v => v == null ? "–" : (v * 100).toFixed(1) + "%";
 const num = v => v == null ? "–" : Number(v).toLocaleString();
 const SVGNS = "http://www.w3.org/2000/svg";
-const state = { from: null, to: null, source: "rollup" };
+// anchor = latest delivered date in the data (from /health), so presets never drift into empty months
+const state = { from: null, to: null, source: "rollup", anchor: new Date() };
 
 function el(tag, attrs = {}, parent) {
   const n = document.createElementNS(SVGNS, tag);
@@ -156,8 +159,8 @@ function setPreset(months) {
   document.querySelectorAll("#presets button").forEach(b => b.setAttribute("aria-pressed", b.dataset.p == months));
   if (months == 0) { state.from = state.to = null; }
   else {
-    // Whole calendar months (ending this month) so the supplier rollup can answer exactly.
-    const now = new Date();
+    // Whole calendar months ending with the data's latest month, so the supplier rollup can answer exactly.
+    const now = state.anchor;
     state.from = iso(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (months - 1), 1)));
     state.to = iso(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0)));
   }
@@ -335,7 +338,7 @@ async function load() {
       .then(r => [r, false])
       .catch(() => get("/analytics/delays/by-supplier", { ...supplierArgs, source: "live" }).then(r => [r, true]));
     const [summary, trend, carriers, [sup, usedLive]] = await Promise.all([
-      get("/analytics/summary"), get("/analytics/delays/trend"), get("/analytics/delays/by-carrier"), supplierReq]);
+      get("/analytics/summary", { as_of: iso(state.anchor) }), get("/analytics/delays/trend"), get("/analytics/delays/by-carrier"), supplierReq]);
     if (my !== seq) return;
     renderTiles(summary); renderTrend(trend); renderCarriers(carriers); renderSuppliers(sup, usedLive && state.source === "rollup");
     $("#timing").textContent = `${state.source} · ${Math.round(performance.now() - t0)} ms`;
@@ -357,7 +360,9 @@ for (const id of ["from", "to"]) $("#" + id).addEventListener("change", e => {
   document.querySelectorAll("#presets button").forEach(b => b.setAttribute("aria-pressed", false));
   load();
 });
-setPreset(12);
+fetch("/health").then(r => r.json()).then(hl => {
+  if (hl.latest_delivered_date) state.anchor = new Date(hl.latest_delivered_date + "T00:00:00Z");
+}).catch(() => {}).finally(() => setPreset(12));
 </script>
 </body>
 </html>

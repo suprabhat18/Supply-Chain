@@ -9,11 +9,25 @@ with delivery-delay analytics, a dashboard, and a scaling plan for moving to Pos
 python -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m scripts.seed              # builds data/shipments.db (~10 s)
 .venv/bin/uvicorn app.main:app --reload       # dashboard: http://localhost:8000  API docs: /docs
-.venv/bin/python -m pytest -q                 # 40 tests
+.venv/bin/python -m pytest -q                 # SQLite; see below for Postgres
 ```
 
-`scripts.seed` takes `--suppliers`, `--shipments`, `--seed` and `--db`. Set `SHIPMENTS_DB` to
-point the API at another file.
+`scripts.seed` takes `--suppliers`, `--shipments`, `--seed` and `--db`.
+
+### Running on Postgres
+
+The same code runs on SQLite or Postgres; `DATABASE_URL` selects the engine (a file path or a
+`postgresql://` URL). The Postgres schema is `app/schema_postgres.sql`.
+
+```bash
+.venv/bin/python -m scripts.seed --db postgresql://user:pass@localhost/shipments
+DATABASE_URL=postgresql://user:pass@localhost/shipments .venv/bin/uvicorn app.main:app
+```
+
+Tests run on SQLite by default. With `TEST_DATABASE_URL` set to a Postgres server (user needs
+`CREATEDB`), every test also runs on Postgres, plus `tests/test_cross_engine.py`, which seeds
+identical data into both engines and asserts every API response is identical. CI
+(`.github/workflows/ci.yml`) does this against Postgres 16 on every push.
 
 ## Schema (`app/schema.sql`)
 

@@ -46,7 +46,8 @@ def test_supplier_rollup_rejects_partial_months(conn):
 
 def test_incremental_refresh_matches_full_rebuild(conn):
     # Corrupt a window of the rollups, then repair just that window.
-    conn.execute("UPDATE delay_metrics_carrier_daily SET late_count = 0 WHERE metric_date LIKE '2025-04%'")
+    conn.execute("UPDATE delay_metrics_carrier_daily SET late_count = 0 "
+                 "WHERE metric_date BETWEEN '2025-04-01' AND '2025-04-30'")
     conn.execute("UPDATE delay_metrics_supplier_monthly SET late_count = 0 WHERE metric_month = '2025-04'")
     refresh_delay_metrics(conn, "2025-04-10", "2025-04-30")   # partial month: supplier window widens
     after_incremental = (

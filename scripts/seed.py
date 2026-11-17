@@ -2,6 +2,7 @@
 
     python -m scripts.seed                      # 1,200 suppliers, 150,000 shipments
     python -m scripts.seed --shipments 500000   # bigger run
+    python -m scripts.seed --db postgresql://user:pass@host/dbname   # same data into Postgres
 
 Notes on realism
   * Each supplier and carrier gets a latent reliability score; delays are drawn
@@ -21,7 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.db import connect, db_path, init_schema, transaction  # noqa: E402
+from app.db import connect, default_target, init_schema, reset_database, sync_identity_sequences, transaction  # noqa: E402
 from app.metrics import refresh_delay_metrics  # noqa: E402
 
 AS_OF = date(2026, 11, 15)          # "today" for the dataset; later deliveries are still in transit
@@ -88,12 +89,11 @@ def tracking_number(rng: random.Random, fmt: str) -> str:
     return "".join(rng.choice("ABCDEFGHIJKLMNOPQRSTUVWXYZ") for _ in range(3)) + "U" + str(rng.randrange(10**6, 10**7))
 
 
-def seed(path: Path, n_suppliers: int, n_shipments: int, rng_seed: int = 42) -> None:
+def seed(target: str | Path, n_suppliers: int, n_shipments: int, rng_seed: int = 42) -> None:
+    """Build the dataset into `target` (SQLite path or Postgres URL). Same seed -> identical rows on both."""
     rng = random.Random(rng_seed)
-    if path.exists():
-        path.unlink()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = connect(path)
+    reset_database(target)
+    conn = connect(target)
     init_schema(conn)
     t0 = time.perf_counter()
 
@@ -102,22 +102,23 @@ def seed(path: Path, n_suppliers: int, n_shipments: int, rng_seed: int = 42) -> 
         for region_id, (region, countries) in enumerate(REGIONS.items(), start=1):
             conn.execute("INSERT INTO regions (region_id, name) VALUES (?, ?)", (region_id, region))
             for iso, name in countries:
-                cur = conn.execute(
-                    "INSERT INTO countries (iso_code, name, region_id) VALUES (?, ?, ?)", (iso, name, region_id)
-                )
-                country_ids[iso] = cur.lastrowid
+                country_ids[iso] = conn.execute(
+                    "INSERT INTO countries (iso_code, name, region_id) VALUES (?, ?, ?) RETURNING country_id",
+                    (iso, name, region_id),
+                ).fetchone()[0]
 
         carriers = []  # (carrier_id, mode, fmt, reliability)
         for scac, name, mode, fmt in CARRIERS:
-            cur = conn.execute("INSERT INTO carriers (scac_code, name, mode) VALUES (?, ?, ?)", (scac, name, mode))
-            carriers.append((cur.lastrowid, mode, fmt, rng.betavariate(8, 2)))
+            carrier_id = conn.execute("INSERT INTO carriers (scac_code, name, mode) VALUES (?, ?, ?) RETURNING carrier_id",
+                                      (scac, name, mode)).fetchone()[0]
+            carriers.append((carrier_id, mode, fmt, rng.betavariate(8, 2)))
 
         warehouse_ids = []
         for code, name, iso in WAREHOUSES:
-            cur = conn.execute(
-                "INSERT INTO warehouses (code, name, country_id) VALUES (?, ?, ?)", (code, name, country_ids[iso])
-            )
-            warehouse_ids.append(cur.lastrowid)
+            warehouse_ids.append(conn.execute(
+                "INSERT INTO warehouses (code, name, country_id) VALUES (?, ?, ?) RETURNING warehouse_id",
+                (code, name, country_ids[iso]),
+            ).fetchone()[0])
 
         # Supplier mix skews toward manufacturing hubs.
         iso_pool = list(country_ids)
@@ -131,11 +132,8 @@ def seed(path: Path, n_suppliers: int, n_shipments: int, rng_seed: int = 42) -> 
             supplier_rows.append((i, f"SUP-{i:05d}", name, country_ids[iso], tier, onboarded.isoformat()))
             # reliability in (0,1]; tier-3 suppliers are a bit worse on average
             supplier_meta.append((i, rng.betavariate(6 - tier, 1.5), rng.paretovariate(1.2)))
-        conn.executemany(
-            "INSERT INTO suppliers (supplier_id, supplier_code, name, country_id, tier, onboarded_on) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            supplier_rows,
-        )
+        conn.bulk_insert("suppliers", ["supplier_id", "supplier_code", "name", "country_id", "tier", "onboarded_on"],
+                         supplier_rows)
 
         by_mode: dict[str, list] = {}
         for c in carriers:
@@ -193,28 +191,29 @@ def seed(path: Path, n_suppliers: int, n_shipments: int, rng_seed: int = 42) -> 
             rows.append((carrier_id, tn, sup_id, rng.choice(warehouse_ids), ship.isoformat(),
                          promised.isoformat(), delivered_s, status, weight, cost))
 
-        conn.executemany(
-            "INSERT INTO shipments (carrier_id, tracking_number, supplier_id, destination_warehouse_id, "
-            "ship_date, promised_date, delivered_date, status, weight_kg, freight_cost_cents) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            rows,
-        )
+        # Explicit shipment_ids keep both engines byte-for-byte comparable.
+        conn.bulk_insert("shipments", ["shipment_id", "carrier_id", "tracking_number", "supplier_id",
+                                       "destination_warehouse_id", "ship_date", "promised_date", "delivered_date",
+                                       "status", "weight_kg", "freight_cost_cents"],
+                         [(i, *r) for i, r in enumerate(rows, start=1)])
+        sync_identity_sequences(conn)
 
     rollup_rows = refresh_delay_metrics(conn)
     conn.execute("ANALYZE")
     collisions = conn.execute(
         "SELECT COUNT(*) FROM (SELECT tracking_number FROM shipments "
-        "GROUP BY tracking_number HAVING COUNT(DISTINCT carrier_id) > 1)"
+        "GROUP BY tracking_number HAVING COUNT(DISTINCT carrier_id) > 1) AS t"
     ).fetchone()[0]
     conn.close()
-    print(f"Seeded {path} in {time.perf_counter() - t0:.1f}s: {n_suppliers:,} suppliers, "
+    shown = str(target).split("@")[-1]  # never echo credentials from a URL
+    print(f"Seeded {shown} in {time.perf_counter() - t0:.1f}s: {n_suppliers:,} suppliers, "
           f"{n_shipments:,} shipments, {rollup_rows:,} rollup rows, "
           f"{collisions:,} tracking numbers shared across carriers")
 
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--db", type=Path, default=db_path())
+    p.add_argument("--db", default=default_target(), help="SQLite path or postgresql:// URL")
     p.add_argument("--suppliers", type=int, default=1200)
     p.add_argument("--shipments", type=int, default=150_000)
     p.add_argument("--seed", type=int, default=42)

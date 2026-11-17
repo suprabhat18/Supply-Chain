@@ -106,3 +106,20 @@ def test_supplier_scorecard(client):
     assert card["supplier_code"] == "SUP-00001"
     assert card["totals"]["delivered"] == card["shipments_by_status"].get("delivered", 0)
     assert client.get("/suppliers/999999").status_code == 404
+
+
+def test_read_only_mode_blocks_writes(client, monkeypatch):
+    monkeypatch.setenv("DEMO_READ_ONLY", "1")
+    assert client.post("/shipments", json=NEW).status_code == 403
+    assert client.patch("/shipments/1", json={"status": "cancelled"}).status_code == 403
+    assert client.post("/admin/refresh-metrics").status_code == 403
+    # reads still work
+    h = client.get("/health").json()
+    assert h["read_only"] is True and h["shipments"] == 8000
+    assert client.get("/analytics/summary").status_code == 200
+
+
+def test_health_reports_latest_delivered_date(client):
+    latest = client.get("/health").json()["latest_delivered_date"]
+    newest = client.get("/analytics/delays/trend", params={"source": "live"}).json()[-1]["month"]
+    assert latest[:7] == newest

@@ -1,7 +1,29 @@
 # Supply Chain Shipment Analytics
 
-Python · SQLite · FastAPI. A normalized logistics store (1,200 suppliers, 150,000 shipments)
-with delivery-delay analytics, a dashboard, and a scaling plan for moving to Postgres.
+[![tests](https://github.com/suprabhat18/Supply-Chain/actions/workflows/ci.yml/badge.svg)](https://github.com/suprabhat18/Supply-Chain/actions/workflows/ci.yml)
+![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-3776ab)
+![SQLite | Postgres 16](https://img.shields.io/badge/db-SQLite%20%7C%20Postgres%2016-336791)
+![FastAPI](https://img.shields.io/badge/api-FastAPI-009688)
+
+Python · SQLite / Postgres · FastAPI. A normalized logistics store (1,200 suppliers,
+150,000 shipments) with delivery-delay analytics, a dashboard, and a tested path from SQLite
+to Postgres.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/dashboard-dark.png">
+  <img alt="Dashboard: KPI tiles, monthly on-time rate line chart, on-time rate by carrier bar chart" src="docs/images/dashboard-light.png">
+</picture>
+
+**Highlights**
+- **Integrity in the database, not just the API:** `UNIQUE (carrier_id, tracking_number)`
+  allows the same tracking number across carriers but never within one. The seed reuses about
+  2,700 tracking numbers across carriers to prove it. FKs and CHECKs are enforced on both engines.
+- **Precomputed delay metrics:** queries take 2–8 ms whether there are 150k or 1.5M shipments,
+  versus about 100 ms → 1.1 s for live scans. Rollup size depends on days × carriers, not on
+  shipment count. Tests assert rollup results equal live results exactly.
+- **Same code on SQLite and Postgres:** CI seeds identical data into both and asserts that every
+  API response matches (102 tests against Postgres 16).
+- **Scaling plan** with measured numbers: [docs/SCALING.md](docs/SCALING.md).
 
 ## Quick start
 
